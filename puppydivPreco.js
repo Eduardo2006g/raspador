@@ -18,7 +18,7 @@ async function scrape() {
 
   // Obtém todos os parágrafos com a classe 'card__street'
   const paragraphs = await page.evaluate(() => {
-    const paragraphElements = [...document.querySelectorAll('p.price-info-value')];
+    const paragraphElements = [...document.querySelectorAll("p.price-info-value")];
     return paragraphElements.map(p => p.textContent.trim());
   });
 
