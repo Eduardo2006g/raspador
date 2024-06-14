@@ -1,7 +1,11 @@
 const puppeteer = require('puppeteer');
+const XLSX = require('xlsx');
 
 async function scrape() {
-  const browser = await puppeteer.launch({ headless: false });
+  const browser = await puppeteer.launch({ 
+    headless: false,
+    protocolTimeout: 300000 // Aumenta o tempo limite do protocolo para 300 segundos
+  });
   const page = await browser.newPage();
 
   // Configura o cabeçalho para simular uma solicitação de navegador
@@ -11,14 +15,14 @@ async function scrape() {
 
   // Navega até a página desejada
   const initialUrl = 'https://www.zapimoveis.com.br/venda/imoveis/es+guarapari/?transacao=venda&onde=,Esp%C3%ADrito%20Santo,Guarapari,,,,,city,BR%3EEspirito%20Santo%3ENULL%3EGuarapari,-20.673893,-40.499984,&itl_id=1000072&itl_name=zap_-_botao-cta_buscar_to_zap_resultado-pesquisa';
-  await page.goto(initialUrl);
+  await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 120000 }); // Aumenta o tempo limite para 120 segundos
 
   // Função para rolar a página até o final
   async function autoScroll(page) {
     await page.evaluate(async () => {
       await new Promise((resolve) => {
         let totalHeight = 0;
-        const distance = 100;
+        const distance = 80;
         const timer = setInterval(() => {
           const scrollHeight = document.body.scrollHeight;
           window.scrollBy(0, distance);
@@ -67,16 +71,17 @@ async function scrape() {
   }
 
   let pageCount = 0;  // Contador de páginas
+  let allData = [];   // Array para armazenar todos os dados coletados
 
   // Loop para navegar pelas páginas e coletar os dados
-  while (pageCount < 2) {  // Limite de 2 páginas
+  while (true) {  // Loop infinito, será interrompido ao não encontrar mais páginas
     // Aguarda até que a página esteja completamente carregada
     await page.waitForSelector('body');
 
     // Coleta os dados da página atual
     const data = await collectData(page);
+    allData = allData.concat(data);  // Adiciona os dados coletados ao array total
 
-    // Imprime os dados coletados da página atual
     console.log(`Página ${pageCount + 1}, Link: ${page.url()}`);
     console.log('Endereço | Rua | Preço');
     data.forEach(item => {
@@ -85,22 +90,51 @@ async function scrape() {
 
     pageCount++;  // Incrementa o contador de páginas
 
-    if (pageCount < 2) {  // Somente tenta ir para a próxima página se o contador for menor que 2
-      // Tenta clicar no botão "Próxima página"
-      const nextPageButton = await page.$('button[aria-label="Próxima página"]');
-      if (nextPageButton) {
-        await Promise.all([
-          nextPageButton.click(),
-          page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }) // 60 segundos
-        ]);
-      } else {
-        break; // Sai do loop se o botão "Próxima página" não estiver presente
+    // Tenta clicar no botão "Próxima página"
+    const nextPageButton = await page.$('button[aria-label="Próxima página"]');
+    if (nextPageButton) {
+      const previousUrl = page.url();
+      try {
+        await nextPageButton.click();
+        // Espera pela navegação, com tentativas adicionais em caso de timeout
+        let navigationSuccess = false;
+        for (let attempt = 0; attempt < 3; attempt++) { // Tenta até 3 vezes
+          try {
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 }); // Aumenta o tempo limite para 120 segundos
+            navigationSuccess = true;
+            break;
+          } catch (navError) {
+            console.warn(`Tentativa ${attempt + 1} falhou: ${navError.message}`);
+          }
+        }
+        if (!navigationSuccess) {
+          throw new Error('Falha ao navegar para a próxima página após 3 tentativas');
+        }
+
+        // Verifica se a página realmente mudou
+        const currentUrl = page.url();
+        if (currentUrl === previousUrl) {
+          break; // Sai do loop se a página não mudou
+        }
+      } catch (error) {
+        console.error('Erro ao tentar navegar para a próxima página:', error);
+        break;
       }
+    } else {
+      break; // Sai do loop se o botão "Próxima página" não estiver presente
     }
   }
 
   // Fecha o navegador
   await browser.close();
+
+  // Salva os dados em uma planilha Excel
+  const worksheet = XLSX.utils.json_to_sheet(allData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Propriedade1');
+  XLSX.writeFile(workbook, 'propriedade1.xlsx');
+
+  console.log('Dados salvos na planilha propriedade1.xlsx');
 }
 
 // Chama a função para iniciar a raspagem
